@@ -1,0 +1,42 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+
+# ── f1tenth_gym (cloned dependency — recreated by setup_env.sh) ──
+f1tenth_gym/
+
+# ── Training artifacts (large binary files) ───────────────────
+checkpoints/
+runs/
+trajectories/
+
+# ── Virtual environments ──────────────────────────────────────
+venv/
+.venv/
+env/
+gym_env/
+
+# ── IDE / Editor ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── OS ────────────────────────────────────────────────────────
+Thumbs.db
+.Trash-*
+
+# ── Jupyter ───────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Misc ──────────────────────────────────────────────────────
+*.log
+*.csv

@@ -1,0 +1,75 @@
+# =============================================================================
+#  F1TENTH PPO Racing Agent — Master Configuration
+# =============================================================================
+
+# ── Environment ───────────────────────────────────────────────────────────────
+env:
+  map_name: "Spielberg"
+  map_path: "/home/quark/coding/RL_project/f1tenth_gym/gym/f110_gym/envs/maps/berlin"
+  map_ext: ".png"
+  num_agents: 1
+  timestep: 0.01                    # 100 Hz simulation
+  integrator: "RK4"
+  num_beams: 1080                   # raw LiDAR beams
+
+  # Starting pose on Spielberg (Red Bull Ring)
+  start_x: -0.8
+  start_y: 0.03
+  start_theta: -0.11
+
+  # Physical limits
+  max_speed: 20.0                   # m/s
+  max_steer: 0.4189                 # rad  (~24 deg)
+  max_accel: 7.0                    # m/s^2
+  lidar_max_range: 30.0             # meters
+
+# ── Wrapper ───────────────────────────────────────────────────────────────────
+wrapper:
+  downsample_factor: 10             # 1080 → 108 beams
+  downsample_mode: "min"            # conservative: take min per window
+  normalize_lidar: true
+  velocity_scale: 20.0              # normalization divisor for vx, vy
+  steer_scale: 0.4189               # normalization divisor for steer
+
+# ── Reward weights ────────────────────────────────────────────────────────────
+reward:
+  speed_weight: 1.0                 # v * cos(Δθ)
+  progress_weight: 0.1
+  collision_penalty: -5.0
+  steer_change_penalty: -0.01
+
+# ── PPO Hyperparameters ──────────────────────────────────────────────────────
+ppo:
+  gamma: 0.99                       # discount factor
+  gae_lambda: 0.95                  # GAE λ
+  clip_epsilon: 0.2                 # PPO clipping
+  learning_rate: 3.0e-4
+  entropy_coeff: 0.01               # entropy bonus
+  value_loss_coeff: 0.5             # critic loss weight
+  max_grad_norm: 0.5                # gradient clipping
+  ppo_epochs: 10                    # optimization epochs per rollout
+  mini_batch_size: 64
+  rollout_length: 2048              # steps per rollout
+
+# ── Model Architecture ───────────────────────────────────────────────────────
+model:
+  hidden_sizes: [256, 256]
+  use_layer_norm: true
+  ortho_init_gain: 1.41421          # sqrt(2) ≈ 1.414
+  action_log_std_init: -0.5         # initial log_std for exploration
+
+# ── Training ─────────────────────────────────────────────────────────────────
+training:
+  total_timesteps: 1000000
+  render_every: 20                  # render every N episodes
+  save_every: 50                    # checkpoint every N episodes
+  log_dir: "runs/"
+  checkpoint_dir: "checkpoints/"
+  best_model_path: "checkpoints/best_model.pt"
+
+# ── Evaluation ────────────────────────────────────────────────────────────────
+eval:
+  num_laps: 5
+  model_path: "checkpoints/best_model.pt"
+  trajectory_dir: "trajectories/"
+  deterministic: true
