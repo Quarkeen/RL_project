@@ -5,7 +5,7 @@
 # ── Environment ───────────────────────────────────────────────────────────────
 env:
   map_name: "Berlin"
-  map_path: "/home/quark/coding/RL_project/f1tenth_gym/gym/f110_gym/envs/maps/berlin"
+  map_path: "/home/quark/coding/RL/RL_project/f1tenth_gym/gym/f110_gym/envs/maps/berlin"
   map_ext: ".png"
   num_agents: 1
   timestep: 0.01                    # 100 Hz simulation
@@ -61,7 +61,7 @@ model:
 
 # ── Training ─────────────────────────────────────────────────────────────────
 training:
-  total_timesteps: 300000
+  total_timesteps: 500000
   render_every: 10                  # render every N episodes
   save_every: 50                    # checkpoint every N episodes
   log_dir: "runs/"

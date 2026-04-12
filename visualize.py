@@ -27,7 +27,7 @@ def visualize(config_path: str = "config.yaml", model_path: str = None):
     eval_cfg = config["eval"]
 
     if model_path is None:
-        model_path = eval_cfg.get("model_path", "checkpoints/best_model.pt")
+        model_path = eval_cfg.get("model_path", "checkpoints/final_model.pt")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
