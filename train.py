@@ -138,6 +138,7 @@ def ppo_update(
     max_grad = ppo_cfg["max_grad_norm"]
     epochs = ppo_cfg["ppo_epochs"]
     batch_size = ppo_cfg["mini_batch_size"]
+    target_kl = ppo_cfg.get("target_kl", 0.02)  # KL divergence threshold
 
     metrics = {
         "policy_loss": 0.0,
@@ -195,6 +196,11 @@ def ppo_update(
             metrics["clip_fraction"] += clip_frac
             num_updates += 1
 
+        # ── KL Early Stopping ─────────────────────────────────────────
+        # If the policy changed too much, stop to prevent catastrophic updates
+        if num_updates > 0 and (metrics["approx_kl"] / num_updates) > target_kl:
+            break
+
     # Average metrics
     for k in metrics:
         metrics[k] /= max(num_updates, 1)
@@ -236,7 +242,8 @@ def train(config_path: str = "config.yaml"):
 
     # ── Model & Optimizer ─────────────────────────────────────────────────
     model = build_model(config, device)
-    optimizer = optim.Adam(model.parameters(), lr=ppo_cfg["learning_rate"], eps=1e-5)
+    lr_init = ppo_cfg["learning_rate"]
+    optimizer = optim.Adam(model.parameters(), lr=lr_init, eps=1e-5)
 
     # ── Rollout Buffer ────────────────────────────────────────────────────
     buffer = RolloutBuffer(
@@ -259,7 +266,7 @@ def train(config_path: str = "config.yaml"):
     episode_lap_times = deque(maxlen=100)
 
     print(f"\n{'='*70}")
-    print(f"  F1TENTH PPO Training — Spielberg (Red Bull Ring)")
+    print(f"  F1TENTH PPO Training — Berlin")
     print(f"  Total timesteps: {total_timesteps:,}")
     print(f"  Rollout length:  {ppo_cfg['rollout_length']}")
     print(f"  Mini-batch size: {ppo_cfg['mini_batch_size']}")
@@ -276,10 +283,17 @@ def train(config_path: str = "config.yaml"):
     ep_reward = 0.0
     ep_length = 0
     ep_speeds = []
+    render_this_episode = (train_cfg.get("render_every", 20) == 1)
     start_time = time.time()
 
     # ── Main Loop ─────────────────────────────────────────────────────────
     while global_step < total_timesteps:
+
+        # ── Learning Rate Annealing ───────────────────────────────
+        frac = 1.0 - (global_step / total_timesteps)
+        lr_now = lr_init * max(frac, 0.0)
+        for pg in optimizer.param_groups:
+            pg["lr"] = lr_now
 
         # ── Collect Rollout ───────────────────────────────────────────
         buffer.reset()
@@ -299,6 +313,17 @@ def train(config_path: str = "config.yaml"):
             # Step environment
             next_obs, reward, terminated, truncated, info = env.step(action_np)
             done = terminated or truncated
+
+            # Rendering mechanism matching visualize.py
+            if render_this_episode:
+                try:
+                    frame_start = time.time()
+                    env.render(mode="human_fast")
+                    elapsed = time.time() - frame_start
+                    if elapsed < (1.0 / 60.0):
+                        time.sleep((1.0 / 60.0) - elapsed)
+                except Exception:
+                    pass  # Fallback for headless environments
 
             # Store transition
             buffer.store(obs, action_np, log_prob_np, reward, done, value_np)
@@ -339,12 +364,7 @@ def train(config_path: str = "config.yaml"):
                         f"FPS: {fps:6.0f}"
                     )
 
-                # ── Render every N episodes ──────────────────────────
-                if episode_num % train_cfg["render_every"] == 0:
-                    try:
-                        env.render(mode="human")
-                    except Exception:
-                        pass  # headless fallback
+
 
                 # ── Save checkpoint ──────────────────────────────────
                 if episode_num % train_cfg["save_every"] == 0:
@@ -378,6 +398,9 @@ def train(config_path: str = "config.yaml"):
                 ep_reward = 0.0
                 ep_length = 0
                 ep_speeds = []
+                # Determine if we should render the next episode
+                render_this_episode = ((episode_num + 1) % train_cfg.get("render_every", 20) == 0)
+
                 obs, info = env.reset(
                     start_x=env_cfg["start_x"],
                     start_y=env_cfg["start_y"],
@@ -407,6 +430,7 @@ def train(config_path: str = "config.yaml"):
         writer.add_scalar("Loss/Total", metrics["total_loss"], global_step)
         writer.add_scalar("PPO/Approx_KL", metrics["approx_kl"], global_step)
         writer.add_scalar("PPO/Clip_Fraction", metrics["clip_fraction"], global_step)
+        writer.add_scalar("PPO/Learning_Rate", lr_now, global_step)
 
         if len(episode_rewards) > 0:
             writer.add_scalar("Rollout/Mean_Reward", np.mean(episode_rewards), global_step)

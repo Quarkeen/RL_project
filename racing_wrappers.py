@@ -5,29 +5,25 @@
  vector suitable for policy learning.
 =============================================================================
 
-Observation Vector Layout (111-dimensional):
+Observation Vector Layout (110-dimensional):
   [0:108]  → Downsampled & normalized LiDAR  (108 beams)
   [108]    → Normalized longitudinal velocity  (vx / v_max)
-  [109]    → Normalized lateral velocity        (vy / v_max)
-  [110]    → Normalized steering angle          (δ  / δ_max)
+  [109]    → Normalized steering angle          (δ  / δ_max)
+
+Action Space (2-dimensional, continuous):
+  [0]      → Desired steering angle  [-max_steer, +max_steer]
+  [1]      → Desired speed            [0, max_speed]
+
+  The speed is passed directly to f1tenth_gym's internal PID controller
+  which computes the appropriate acceleration/braking to reach the
+  requested velocity. This means the agent can command full speed
+  instantly on any timestep.
 
 Reward Function:
-  R_t = (v_t · cos(Δθ))                    — speed along track heading
-      + 0.1  · progress                     — centerline arc-length gain
-      − 5.0  · collision                    — hard crash penalty
-      − 0.01 · |δ_t − δ_{t-1}|             — steering smoothness
-
-Progress Term Explanation:
-  "Progress" is the difference in the Frenet s-coordinate between consecutive
-  timesteps. The Frenet frame decomposes position into (s, d) where s is the
-  arc-length along the track centerline and d is the lateral deviation.
-  Δs = s_t − s_{t−1} measures how much distance the car has covered *along
-  the raceline* since the last step. This is superior to Euclidean distance
-  because it rewards forward lap advancement and is invariant to lateral
-  weaving. A negative Δs would indicate the car is going backwards.
-  Since the f1tenth_gym does not directly expose the Frenet coordinate, we
-  approximate progress using the nearest-point projection onto the centerline
-  waypoints, computing cumulative arc-length differences.
+  R_t = speed_weight · (v / v_max) · cos(Δθ)  — normalized speed along heading
+      + progress_weight · progress             — centerline arc-length gain
+      + collision_penalty · collision           — hard crash penalty
+      + steer_change_penalty · |δ_t − δ_{t-1}| — steering smoothness
 """
 
 import numpy as np
@@ -74,18 +70,21 @@ class F1TENTH_Wrapper:
         # Reward weights
         self.speed_weight = reward_cfg.get("speed_weight", 1.0)
         self.progress_weight = reward_cfg.get("progress_weight", 0.1)
-        self.collision_penalty = reward_cfg.get("collision_penalty", -5.0)
+        self.collision_penalty = reward_cfg.get("collision_penalty", -10.0)
         self.steer_change_penalty = reward_cfg.get("steer_change_penalty", -0.01)
 
-        # Action limits
+        # Action limits — agent outputs [steer, speed] directly
         self.max_steer = env_cfg.get("max_steer", 0.4189)
         self.max_speed = env_cfg.get("max_speed", 20.0)
-        self.max_accel = env_cfg.get("max_accel", 7.0)
+
+        # Episode truncation
+        self.max_episode_steps = env_cfg.get("max_episode_steps", 2000)
+        self.episode_step_count = 0
 
         # ── Derived constants ─────────────────────────────────────────────
         raw_beams = env_cfg.get("num_beams", 1080)
         self.num_downsampled = raw_beams // self.downsample_factor  # 108
-        self.obs_dim = self.num_downsampled + 3  # lidar + vx + vy + steer
+        self.obs_dim = self.num_downsampled + 2  # lidar + vx + steer (no vy)
 
         # ── Observation & Action spaces ───────────────────────────────────
         self.observation_space = spaces.Box(
@@ -94,17 +93,19 @@ class F1TENTH_Wrapper:
             dtype=np.float32,
         )
 
-        # Continuous: [steering (-0.41, 0.41), acceleration (-7, 7)]
+        # Normalized action space: both dimensions in [-1, 1]
+        # The wrapper rescales to physical units:
+        #   steer = action[0] * max_steer
+        #   speed = (action[1] + 1) / 2 * max_speed  →  mean=0 gives max_speed/2
         self.action_space = spaces.Box(
-            low=np.array([-self.max_steer, -self.max_accel], dtype=np.float32),
-            high=np.array([self.max_steer, self.max_accel], dtype=np.float32),
+            low=np.array([-1.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
         )
 
         # ── State tracking ────────────────────────────────────────────────
         self.prev_steer = 0.0
         self.prev_theta = 0.0
-        self.current_speed = 0.0  # maintained for acceleration → velocity
 
         # ── Centerline for progress computation ──────────────────────────
         self.centerline = centerline
@@ -186,11 +187,11 @@ class F1TENTH_Wrapper:
         lidar_features = self._process_lidar(scan)
 
         # Proprioception (normalized)
+        # Note: f1tenth_gym hardcodes linear_vels_y to 0, so we omit it
         vx = raw_obs["linear_vels_x"][0] / self.velocity_scale
-        vy = raw_obs["linear_vels_y"][0] / self.velocity_scale
         steer = self.prev_steer / self.steer_scale  # most recent command
 
-        proprio = np.array([vx, vy, steer], dtype=np.float32)
+        proprio = np.array([vx, steer], dtype=np.float32)
         obs = np.concatenate([lidar_features, proprio])
 
         return obs
@@ -208,12 +209,15 @@ class F1TENTH_Wrapper:
         """
         # ── Speed component (velocity aligned with heading change) ──────
         vx = raw_obs["linear_vels_x"][0]
-        vy = raw_obs["linear_vels_y"][0]
-        v = np.sqrt(vx ** 2 + vy ** 2)
+        # Use vx directly (NOT abs) — backwards driving gives NEGATIVE reward
+        v_normalized = vx / self.max_speed  # in [-1, 1]
 
         theta = raw_obs["poses_theta"][0]
         delta_theta = self._angle_diff(theta, self.prev_theta)
-        speed_reward = self.speed_weight * v * np.cos(delta_theta)
+        speed_reward = self.speed_weight * v_normalized * np.cos(delta_theta)
+
+        # ── Backward penalty — explicit discouragement of reverse motion ─
+        backward_penalty = -0.5 if vx < -0.1 else 0.0
 
         # ── Progress component (Frenet arc-length gain) ─────────────────
         progress_reward = 0.0
@@ -240,7 +244,7 @@ class F1TENTH_Wrapper:
             self.prev_steer - self._last_applied_steer
         )
 
-        reward = speed_reward + progress_reward + collision_reward + steer_penalty
+        reward = speed_reward + progress_reward + collision_reward + steer_penalty + backward_penalty
         return float(reward)
 
     @staticmethod
@@ -271,7 +275,7 @@ class F1TENTH_Wrapper:
         self.prev_steer = 0.0
         self._last_applied_steer = 0.0
         self.prev_theta = raw_obs["poses_theta"][0]
-        self.current_speed = 0.0
+        self.episode_step_count = 0
 
         if self.centerline is not None:
             x = raw_obs["poses_x"][0]
@@ -288,26 +292,24 @@ class F1TENTH_Wrapper:
         Parameters
         ----------
         action : np.ndarray, shape (2,)
-            [steering_angle, acceleration]
+            [steering_angle, desired_speed]
+            The speed is passed directly to f1tenth_gym's PID controller.
 
         Returns
         -------
         obs, reward, terminated, truncated, info
         """
-        steer = float(np.clip(action[0], -self.max_steer, self.max_steer))
-        accel = float(np.clip(action[1], -self.max_accel, self.max_accel))
+        # Rescale normalized actions to physical units
+        steer = float(np.clip(action[0], -1.0, 1.0)) * self.max_steer
+        speed = float(np.clip(action[1], -1.0, 1.0))
+        speed = (speed + 1.0) / 2.0 * self.max_speed  # [-1,1] → [0, max_speed]
 
-        # Convert acceleration to velocity command
-        dt = 0.01  # env timestep
-        self.current_speed = np.clip(
-            self.current_speed + accel * dt,
-            0.0,  # no reverse
-            self.max_speed,
-        )
-
-        # f1tenth_gym expects [[steer, speed]]
-        gym_action = np.array([[steer, self.current_speed]])
+        # f1tenth_gym expects [[steer, speed]] — PID handles acceleration
+        gym_action = np.array([[steer, speed]])
         raw_obs, step_time, done, info = self.env.step(gym_action)
+
+        # Track episode length for truncation
+        self.episode_step_count += 1
 
         # Detect collision from obs
         collision = bool(raw_obs.get("collisions", [0.0])[0])
@@ -323,15 +325,14 @@ class F1TENTH_Wrapper:
         # Build processed observation
         obs = self._build_obs(raw_obs)
 
-        # Gymnasium 5-tuple API
+        # Termination: collision or env done
         terminated = done or collision
-        truncated = False
+        # Truncation: max episode length reached
+        truncated = (self.episode_step_count >= self.max_episode_steps) and not terminated
 
         # Enrich info dict
         info["collision"] = collision
-        info["speed"] = np.sqrt(
-            raw_obs["linear_vels_x"][0] ** 2 + raw_obs["linear_vels_y"][0] ** 2
-        )
+        info["speed"] = abs(raw_obs["linear_vels_x"][0])
         info["pose_x"] = raw_obs["poses_x"][0]
         info["pose_y"] = raw_obs["poses_y"][0]
         info["pose_theta"] = raw_obs["poses_theta"][0]
@@ -432,6 +433,9 @@ def load_centerline(map_path: str) -> np.ndarray:
     import glob
 
     search_dir = os.path.dirname(map_path) if os.path.isfile(map_path) else map_path
+    # map_path might be a base name like ".../maps/berlin" — try parent dir
+    if not os.path.isdir(search_dir):
+        search_dir = os.path.dirname(map_path)
     patterns = [
         os.path.join(search_dir, "*centerline*"),
         os.path.join(search_dir, "*raceline*"),

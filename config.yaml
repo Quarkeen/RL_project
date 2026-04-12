@@ -4,7 +4,7 @@
 
 # ── Environment ───────────────────────────────────────────────────────────────
 env:
-  map_name: "Spielberg"
+  map_name: "Berlin"
   map_path: "/home/quark/coding/RL_project/f1tenth_gym/gym/f110_gym/envs/maps/berlin"
   map_ext: ".png"
   num_agents: 1
@@ -12,30 +12,30 @@ env:
   integrator: "RK4"
   num_beams: 1080                   # raw LiDAR beams
 
-  # Starting pose on Spielberg (Red Bull Ring)
+  # Starting pose on Berlin
   start_x: -0.8
   start_y: 0.03
   start_theta: -0.11
 
   # Physical limits
-  max_speed: 20.0                   # m/s
+  max_speed: 5.0                    # m/s (reasonable for learning)
   max_steer: 0.4189                 # rad  (~24 deg)
-  max_accel: 7.0                    # m/s^2
   lidar_max_range: 30.0             # meters
+  max_episode_steps: 1500           # 15 seconds at 100 Hz
 
 # ── Wrapper ───────────────────────────────────────────────────────────────────
 wrapper:
   downsample_factor: 10             # 1080 → 108 beams
   downsample_mode: "min"            # conservative: take min per window
   normalize_lidar: true
-  velocity_scale: 20.0              # normalization divisor for vx, vy
+  velocity_scale: 8.0               # normalization divisor (must match max_speed)
   steer_scale: 0.4189               # normalization divisor for steer
 
 # ── Reward weights ────────────────────────────────────────────────────────────
 reward:
-  speed_weight: 1.0                 # v * cos(Δθ)
-  progress_weight: 0.1
-  collision_penalty: -5.0
+  speed_weight: 1.0                 # (v/v_max) * cos(Δθ)
+  progress_weight: 10.0             # Δs along centerline — dominant signal
+  collision_penalty: -10.0
   steer_change_penalty: -0.01
 
 # ── PPO Hyperparameters ──────────────────────────────────────────────────────
@@ -49,7 +49,8 @@ ppo:
   max_grad_norm: 0.5                # gradient clipping
   ppo_epochs: 10                    # optimization epochs per rollout
   mini_batch_size: 64
-  rollout_length: 2048              # steps per rollout
+  rollout_length: 4096              # steps per rollout (larger = more stable)
+  target_kl: 0.02                   # KL early stopping threshold
 
 # ── Model Architecture ───────────────────────────────────────────────────────
 model:
@@ -60,8 +61,8 @@ model:
 
 # ── Training ─────────────────────────────────────────────────────────────────
 training:
-  total_timesteps: 1000000
-  render_every: 20                  # render every N episodes
+  total_timesteps: 300000
+  render_every: 10                  # render every N episodes
   save_every: 50                    # checkpoint every N episodes
   log_dir: "runs/"
   checkpoint_dir: "checkpoints/"

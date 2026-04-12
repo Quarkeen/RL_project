@@ -72,9 +72,9 @@ def visualize(config_path: str = "config.yaml", model_path: str = None):
                     action = model.get_deterministic_action(obs_t)
                     action_np = action.cpu().numpy().flatten()
 
-                # Clip actions
-                action_np[0] = np.clip(action_np[0], -env_cfg["max_steer"], env_cfg["max_steer"])
-                action_np[1] = np.clip(action_np[1], -env_cfg["max_accel"], env_cfg["max_accel"])
+                # Clip to normalized [-1, 1] — wrapper rescales to physical units
+                action_np[0] = np.clip(action_np[0], -1.0, 1.0)
+                action_np[1] = np.clip(action_np[1], -1.0, 1.0)
 
                 # Step
                 obs, reward, terminated, truncated, info = env.step(action_np)
@@ -85,7 +85,7 @@ def visualize(config_path: str = "config.yaml", model_path: str = None):
                 speeds.append(info.get("speed", 0.0))
 
                 # Render every frame
-                env.render(mode="human")
+                env.render(mode="human_fast")
 
                 # Frame rate limiter — sleep to maintain ~60 FPS
                 elapsed = time.time() - frame_start

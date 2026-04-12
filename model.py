@@ -48,7 +48,7 @@ class ActorCritic(nn.Module):
 
     def __init__(
         self,
-        obs_dim: int = 111,
+        obs_dim: int = 110,
         action_dim: int = 2,
         hidden_sizes: list = None,
         use_layer_norm: bool = True,
@@ -206,11 +206,11 @@ def build_model(config: dict, device: torch.device = None) -> ActorCritic:
     raw_beams = env_cfg.get("num_beams", 1080)
     downsample = wrapper_cfg.get("downsample_factor", 10)
     num_lidar = raw_beams // downsample
-    obs_dim = num_lidar + 3  # lidar + vx + vy + steer
+    obs_dim = num_lidar + 2  # lidar + vx + steer (vy removed — always 0)
 
     model = ActorCritic(
         obs_dim=obs_dim,
-        action_dim=2,  # steer + accel
+        action_dim=2,  # steer + speed
         hidden_sizes=model_cfg.get("hidden_sizes", [256, 256]),
         use_layer_norm=model_cfg.get("use_layer_norm", True),
         ortho_gain=model_cfg.get("ortho_init_gain", np.sqrt(2)),
