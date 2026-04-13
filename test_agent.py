@@ -98,9 +98,9 @@ def evaluate(config_path: str = "config.yaml", model_path: str = None):
 
                 action_np = action.cpu().numpy().flatten()
 
-            # Clip actions to valid range
-            action_np[0] = np.clip(action_np[0], -env_cfg["max_steer"], env_cfg["max_steer"])
-            action_np[1] = np.clip(action_np[1], -env_cfg["max_accel"], env_cfg["max_accel"])
+            # Clip to normalized [-1, 1] — wrapper rescales to physical units
+            action_np[0] = np.clip(action_np[0], -1.0, 1.0)
+            action_np[1] = np.clip(action_np[1], -1.0, 1.0)
 
             obs, reward, terminated, truncated, info = env.step(action_np)
             done = terminated or truncated

@@ -18,7 +18,7 @@ class ActorCritic(nn.Module):
 
     Architecture:
       ┌────────────┐
-      │  Obs (111)  │
+      │  Obs (110)  │
       └─────┬──────┘
             │
       ┌─────▼──────┐

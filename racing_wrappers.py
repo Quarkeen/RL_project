@@ -106,6 +106,7 @@ class F1TENTH_Wrapper:
         # ── State tracking ────────────────────────────────────────────────
         self.prev_steer = 0.0
         self.prev_theta = 0.0
+        self.episode_sim_time = 0.0
 
         # ── Centerline for progress computation ──────────────────────────
         self.centerline = centerline
@@ -276,6 +277,7 @@ class F1TENTH_Wrapper:
         self._last_applied_steer = 0.0
         self.prev_theta = raw_obs["poses_theta"][0]
         self.episode_step_count = 0
+        self.episode_sim_time = 0.0
 
         if self.centerline is not None:
             x = raw_obs["poses_x"][0]
@@ -308,8 +310,9 @@ class F1TENTH_Wrapper:
         gym_action = np.array([[steer, speed]])
         raw_obs, step_time, done, info = self.env.step(gym_action)
 
-        # Track episode length for truncation
+        # Track episode length and cumulative simulation time
         self.episode_step_count += 1
+        self.episode_sim_time += step_time
 
         # Detect collision from obs
         collision = bool(raw_obs.get("collisions", [0.0])[0])
@@ -336,7 +339,7 @@ class F1TENTH_Wrapper:
         info["pose_x"] = raw_obs["poses_x"][0]
         info["pose_y"] = raw_obs["poses_y"][0]
         info["pose_theta"] = raw_obs["poses_theta"][0]
-        info["lap_time"] = step_time
+        info["lap_time"] = self.episode_sim_time
         info["lap_count"] = raw_obs.get("lap_counts", [0])[0]
 
         return obs, reward, terminated, truncated, info
